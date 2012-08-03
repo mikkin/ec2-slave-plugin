@@ -23,13 +23,19 @@
  */
 package jenkins.plugins.ec2slave;
 
+import com.amazonaws.AmazonClientException;
+import com.amazonaws.AmazonServiceException;
+import com.amazonaws.auth.AWSCredentials;
+import com.amazonaws.auth.BasicAWSCredentials;
+import com.amazonaws.services.ec2.AmazonEC2Client;
 import com.amazonaws.services.ec2.model.*;
-import hudson.model.TaskListener;
 import hudson.model.Descriptor;
+import hudson.model.TaskListener;
 import hudson.slaves.ComputerConnector;
 import hudson.slaves.ComputerLauncher;
 import hudson.slaves.DumbSlave;
 import hudson.slaves.SlaveComputer;
+import org.apache.commons.lang.StringUtils;
 
 import java.io.IOException;
 import java.io.PrintStream;
@@ -37,14 +43,6 @@ import java.text.MessageFormat;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Logger;
-
-import org.apache.commons.lang.StringUtils;
-
-import com.amazonaws.AmazonClientException;
-import com.amazonaws.AmazonServiceException;
-import com.amazonaws.auth.AWSCredentials;
-import com.amazonaws.auth.BasicAWSCredentials;
-import com.amazonaws.services.ec2.AmazonEC2Client;
 
 import static com.amazonaws.services.ec2.model.InstanceStateName.*;
 
@@ -126,7 +124,7 @@ public class EC2ImageLaunchWrapper extends ComputerLauncher {
         }
 
         // Defaults to just stopping, when we're done with our slaves, we're done
-        req.setInstanceInitiatedShutdownBehavior("terminate");
+        //req.setInstanceInitiatedShutdownBehavior("terminate");
 
         RunInstancesResult res = ec2.runInstances(req);
         Reservation rvn = res.getReservation();
@@ -146,21 +144,25 @@ public class EC2ImageLaunchWrapper extends ComputerLauncher {
         Instance instance = ec2.describeInstances(descReq).getReservations().get(0).getInstances().get(0);
         return instance.getPublicDnsName();
     }
-
-    public void terminateInstance(PrintStream logger) {
-        logger.println("EC2InstanceComputerLauncher: Terminating EC2 instance [" + curInstanceId + "] ...");
-        if (testMode)
-            return;
-        
-        ec2.terminateInstances(new TerminateInstancesRequest().withInstanceIds(curInstanceId));
-    }
     
-    public void stopInstance(PrintStream logger) {
+    public void stopInstance(PrintStream logger) throws InterruptedException {
         logger.println("EC2InstanceComputerLauncher: Stopping EC2 instance [" + curInstanceId + "] ...");
         if (testMode)
             return;
 
-        ec2.stopInstances(new StopInstancesRequest().withInstanceIds(curInstanceId));
+        StopInstancesResult stopResult = ec2.stopInstances(new StopInstancesRequest().withInstanceIds(curInstanceId));
+        
+        DescribeInstancesRequest request = new DescribeInstancesRequest().withInstanceIds(curInstanceId);
+        Instance instance = ec2.describeInstances(request).getReservations().get(0).getInstances().get(0);
+        
+        InstanceStateName currentState = InstanceStateName.fromValue(instance.getState().getName());
+        while ( currentState != Stopping) {
+            currentState = InstanceStateName.fromValue(instance.getState().getName());
+            logger.println(MessageFormat.format(
+                    "instance [{0}] is " + currentState + ", waiting for it to stop.", curInstanceId));
+            Thread.sleep(retryIntervalSeconds * 5000);
+        }
+
     }
 
     public List<String> getAvailabilityZones() {
@@ -232,6 +234,7 @@ public class EC2ImageLaunchWrapper extends ComputerLauncher {
                     preLaunchOk = true;
                 } else if (currentInstanceState == Stopping || currentInstanceState == Stopped) {
                     preLaunch(listener.getLogger());
+                    preLaunchOk = true;
                 } else {
                     LOGGER.info("Skipping EC2 part of launch, since the instance is already running");
                 }
@@ -309,16 +312,16 @@ public class EC2ImageLaunchWrapper extends ComputerLauncher {
     @Override
     public void afterDisconnect(SlaveComputer computer, TaskListener listener) {
         computerLauncher.afterDisconnect(computer, listener);
-
-        //LOGGER.info("Terminating EC2 instance " + curInstanceId);
-        //terminateInstance(listener.getLogger());
-        //curInstanceId = null;
-        stopInstance(listener.getLogger());
-        preLaunchOk = false;
+        try {
+            stopInstance(listener.getLogger());
+        } catch (InterruptedException ex) {
+            listener.error(ex.getMessage());
+        }
     }
 
     @Override
     public void beforeDisconnect(SlaveComputer computer, TaskListener listener) {
+
         super.beforeDisconnect(computer, listener);
     }
 
