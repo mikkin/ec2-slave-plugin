@@ -36,36 +36,13 @@ THE SOFTWARE.
       <f:entry title="${%Secret Key}" field="secretKey">
           <f:password />
       </f:entry>
-      
-      <!-- f:validateButton title="${%Test Connection}" progress="${%Testing...}" method="testConnection" with="secretKey,accessKey" /-->
-      
-      <f:entry title="${%AMI}" field="imageId">
+
+      <f:entry title="${%Instance Name}" field="instanceId">
         <f:textbox />
       </f:entry>
       
-      <f:validateButton title="${%Check AMI}" progress="${%Checking...}" method="validateAmi" with="secretKey,accessKey,imageId" />
-      
-      <f:entry title="${%Instance Type}" field="instanceType">
-        <f:textbox />
-      </f:entry>
-      
-      <f:entry title="${%Keypair Name}" field="keypairName">
-        <f:textbox />
-      </f:entry>
-      
-      <f:advanced>
-      
-        <f:entry title="${%Security Group}" field="securityGroup">
-          <f:textbox />
-        </f:entry>
-      
-        <f:entry title="${%Availability Zone}" field="availabilityZone">
-          <f:textbox />
-        </f:entry>
-      
-      </f:advanced>
-      
-      <!-- f:validateButton title="${%Check AMI}" progress="${%Checking...}" method="validateAmi" with="secretKey,accessId,region,ami" /-->
+      <f:validateButton title="${%Check Instance}" progress="${%Checking...}" method="validateInstance" with="secretKey,accessKey,instanceId" />
+
   </f:section>
   
   <!-- In order to display ComputerConnector choices, we might not be able to simply import dumbSlave's description -->

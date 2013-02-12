@@ -23,33 +23,28 @@
  */
 package jenkins.plugins.ec2slave;
 
+import com.amazonaws.AmazonServiceException;
+import com.amazonaws.auth.AWSCredentials;
+import com.amazonaws.auth.BasicAWSCredentials;
+import com.amazonaws.services.ec2.AmazonEC2Client;
+import com.amazonaws.services.ec2.model.DescribeAvailabilityZonesResult;
+import com.amazonaws.services.ec2.model.DescribeInstancesRequest;
+import com.amazonaws.services.ec2.model.DescribeInstancesResult;
+import com.amazonaws.services.ec2.model.Instance;
 import hudson.Extension;
 import hudson.model.Computer;
 import hudson.model.Descriptor;
 import hudson.model.Descriptor.FormException;
 import hudson.model.Hudson;
 import hudson.model.Slave;
-import hudson.slaves.ComputerConnector;
-import hudson.slaves.NodeProperty;
-import hudson.slaves.ComputerLauncher;
-import hudson.slaves.DumbSlave;
-import hudson.slaves.RetentionStrategy;
+import hudson.slaves.*;
 import hudson.util.FormValidation;
+import org.kohsuke.stapler.DataBoundConstructor;
+import org.kohsuke.stapler.QueryParameter;
 
 import java.io.IOException;
 import java.util.List;
 import java.util.logging.Logger;
-
-import org.kohsuke.stapler.DataBoundConstructor;
-import org.kohsuke.stapler.QueryParameter;
-
-import com.amazonaws.AmazonServiceException;
-import com.amazonaws.auth.AWSCredentials;
-import com.amazonaws.auth.BasicAWSCredentials;
-import com.amazonaws.services.ec2.AmazonEC2Client;
-import com.amazonaws.services.ec2.model.DescribeImagesRequest;
-import com.amazonaws.services.ec2.model.DescribeImagesResult;
-import com.amazonaws.services.ec2.model.Image;
 
 /**
  * The {@link EC2ImageSlave} is a slave in the same way {@link DumbSlave} is, i.e.
@@ -69,7 +64,7 @@ public final class EC2ImageSlave extends Slave {
 
     private static final Logger LOGGER = Logger.getLogger(EC2ImageSlave.class.getName());
 
-    private String instanceType, accessKey, imageId, secretKey, keypairName, securityGroup, availabilityZone;
+    private String accessKey, secretKey, instanceId;
 
     private transient EC2ImageLaunchWrapper ec2ImageLaunchWrapper;
 
@@ -80,11 +75,11 @@ public final class EC2ImageSlave extends Slave {
     private ComputerConnector computerConnector;
 
     @DataBoundConstructor
-    public EC2ImageSlave(String secretKey, String accessKey, String imageId, String instanceType, String keypairName,
-                         String securityGroup, String availabilityZone, String name, String nodeDescription, String remoteFS,
-                         String numExecutors, Mode mode, String labelString, ComputerConnector computerConnector,
-                         RetentionStrategy retentionStrategy, List<? extends NodeProperty<?>> nodeProperties) throws FormException,
-            IOException {
+    public EC2ImageSlave(String secretKey, String accessKey, String instanceId, String name, String nodeDescription,
+                         String remoteFS, String numExecutors, Mode mode, String labelString,
+                         ComputerConnector computerConnector, RetentionStrategy retentionStrategy,
+                         List<? extends NodeProperty<?>> nodeProperties) throws FormException, IOException {
+
         super(name, nodeDescription, remoteFS, numExecutors, mode, labelString,
                 null /* null launcher because we create it dynamically in getLauncher */, retentionStrategy, nodeProperties);
 
@@ -92,25 +87,17 @@ public final class EC2ImageSlave extends Slave {
 
         if (ec2ImageLaunchWrapper != null && ec2ImageLaunchWrapper.instanceIsRunning()) {
             final String msg = "You cannot change EC2 configuration while the instance is running.";
+
             if (!secretKey.equals(this.secretKey))
                 throw new FormException(msg, "secretKey");
             if (!accessKey.equals(this.accessKey))
                 throw new FormException(msg, "accessKey");
-            if (!imageId.equals(this.imageId))
+            if (!instanceId.equals(this.instanceId))
                 throw new FormException(msg, "imageId");
-            if (!instanceType.equals(this.instanceType))
-                throw new FormException(msg, "instanceType");
-            if (!keypairName.equals(this.keypairName))
-                throw new FormException(msg, "keypairName");
         }
-
-        this.secretKey = secretKey;
-        this.accessKey = accessKey;
-        this.imageId = imageId;
-        this.instanceType = instanceType;
-        this.keypairName = keypairName;
-        this.securityGroup = securityGroup;
-        this.availabilityZone = availabilityZone;
+        this.secretKey = secretKey.trim();
+        this.accessKey = accessKey.trim();
+        this.instanceId = instanceId.trim();
     }
 
     @Override
@@ -119,9 +106,8 @@ public final class EC2ImageSlave extends Slave {
         //computerConnector.launch(..) here which will return a ComputerLauncher with the
         //hostname already set.  This implies that the EC2ImageSlave config will be displaying
         //Computer *Connector* descriptor stuff rather than *Launcher*
-        ec2ImageLaunchWrapper = new EC2ImageLaunchWrapper(computerConnector, secretKey, accessKey, imageId, instanceType,
-                keypairName, securityGroup, availabilityZone);
 
+        ec2ImageLaunchWrapper = new EC2ImageLaunchWrapper(computerConnector, accessKey, secretKey, instanceId);
         setLauncher(ec2ImageLaunchWrapper);
 
         return ec2ImageLaunchWrapper;
@@ -137,8 +123,9 @@ public final class EC2ImageSlave extends Slave {
             try {
                 AWSCredentials credentials = new BasicAWSCredentials(accessKey, secretKey);
                 AmazonEC2Client ec2 = new AmazonEC2Client(credentials);
-                ec2.setEndpoint("us-west-1.ec2.amazonaws.com");
-                ec2.describeAvailabilityZones();
+                ec2.setEndpoint("ec2.us-west-1.amazonaws.com");
+                final DescribeAvailabilityZonesResult describeAvailabilityZonesResult = ec2.describeAvailabilityZones();
+                LOGGER.info(describeAvailabilityZonesResult.toString());
                 return FormValidation.ok("Success");
             } catch (AmazonServiceException e) {
                 LOGGER.warning("Failed to check EC2 credential: " + e.getMessage());
@@ -146,25 +133,40 @@ public final class EC2ImageSlave extends Slave {
             }
         }
 
-        public FormValidation doValidateAmi(@QueryParameter String accessKey, @QueryParameter String secretKey,
-                                            final @QueryParameter String imageId) {
-
+        /**
+         *
+         * @param accessKey - AWS access key.
+         * @param secretKey - AWS secret key.
+         * @param instanceId
+         * @return
+         */
+        public FormValidation doValidateInstance(@QueryParameter String accessKey, @QueryParameter String secretKey,
+                                                 @QueryParameter String instanceId) {
+            
             FormValidation val = doTestConnection(accessKey, secretKey);
             if (val.kind == FormValidation.Kind.ERROR) {
                 return val;
             }
-
+            LOGGER.info("Validating instance");
             AWSCredentials credentials = new BasicAWSCredentials(accessKey, secretKey);
             AmazonEC2Client ec2 = new AmazonEC2Client(credentials);
             ec2.setEndpoint("us-west-1.ec2.amazonaws.com");
-            DescribeImagesResult res = ec2.describeImages(new DescribeImagesRequest().withImageIds(imageId));
 
-            if (res.getImages().size() > 0 && res.getImages().get(0).getImageId().equals(imageId)) {
-                Image image = res.getImages().get(0);
-                return FormValidation.ok("manifest: " + image.getImageLocation() + "\ndescription: " + image.getDescription());
-            } else {
-                return FormValidation.error("No such AMI: " + imageId);
+            DescribeInstancesResult instanceResult = ec2.describeInstances(
+                    new DescribeInstancesRequest().withInstanceIds(instanceId));
+            LOGGER.info("Instance result: " + instanceResult.toString());
+            if (instanceResult.getReservations().size() > 0 &&
+                    instanceResult.getReservations().get(0).getInstances().size() > 0 ) {
+                
+                final Instance instance = instanceResult.getReservations().get(0).getInstances().get(0);
+
+                LOGGER.info("Instance " + instanceId + " is in " + instance.getState().getName()
+                        + " state");
+                return FormValidation.ok("Instance " + instanceId + " is in " + instance.getState().getName()
+                                            + " state");
+
             }
+            return FormValidation.error("No such instance: " + instanceId);
         }
 
         public static List<Descriptor<ComputerConnector>> getComputerConnectorDescriptors() {
@@ -181,24 +183,8 @@ public final class EC2ImageSlave extends Slave {
         return accessKey;
     }
 
-    public String getImageId() {
-        return imageId;
-    }
-
-    public String getInstanceType() {
-        return instanceType;
-    }
-
-    public String getKeypairName() {
-        return keypairName;
-    }
-
-    public String getAvailabilityZone() {
-        return availabilityZone;
-    }
-
-    public String getSecurityGroup() {
-        return securityGroup;
+    public String getInstanceId() {
+        return instanceId;
     }
 
     public ComputerConnector getComputerConnector() {

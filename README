@@ -1,3 +1,9 @@
+This plugin is a modifed version, taken from https://github.com/adphillips/ec2-slave-plugin
+
+As an input, this plugin takes pre-created instanceName as input when creating a new Jenkins slave instance. The motive was to avoid run-away ec2 slaves. It stops the slave when the idle-timeout occurs and starts the same slave back up. This behavior was not seen in the original plugin.
+
+**********************************************************************************************
+
 This is a plugin to the Jenkins CI server that will allow you to setup a build slave to run on Amazon EC2 instance, 
 given an Amazon Machine Image (AMI) id.
 
