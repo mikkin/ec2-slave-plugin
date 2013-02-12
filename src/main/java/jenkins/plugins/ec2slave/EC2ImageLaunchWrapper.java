@@ -77,7 +77,7 @@ public class EC2ImageLaunchWrapper extends ComputerLauncher {
      * @param instanceId
      */
     public EC2ImageLaunchWrapper(ComputerConnector computerConnector, String accessKey, String secretKey,
-                                    String instanceId) {
+                                 String instanceId) {
 
         this.instanceId = instanceId;
         this.computerConnector = computerConnector;
@@ -96,7 +96,7 @@ public class EC2ImageLaunchWrapper extends ComputerLauncher {
      */
     @Override
     public void launch(SlaveComputer computer, TaskListener listener) throws InterruptedException, IOException {
-        
+
         final InstanceStateName currentInstanceState = getInstanceState(instanceId);
 
         if (currentInstanceState == Pending || currentInstanceState == Terminated) {
@@ -188,7 +188,7 @@ public class EC2ImageLaunchWrapper extends ComputerLauncher {
         Instance instance = ec2.describeInstances(descReq).getReservations().get(0).getInstances().get(0);
         return instance.getPublicDnsName();
     }
-    
+
     private void stopInstance(PrintStream logger) {
         logger.println("EC2InstanceComputerLauncher: Stopping EC2 instance [" + instanceId + "] ...");
         if (testMode)
